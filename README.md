@@ -27,3 +27,8 @@ src/
 ├── context/    # Estados globales (Auth, Tema)
 ├── data/       # Constantes y mocks de datos
 └── hooks/      # Lógica de React extraída
+
+
+## 📂 Despliegue en vercel
+
+https://val-care-frontend.vercel.app/ 
