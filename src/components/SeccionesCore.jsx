@@ -305,7 +305,7 @@ export function Contacto() {
           <h3 className="font-display font-bold text-2xl text-slate-900 dark:text-white mb-3">
             ¿Necesitas agendar una cita?
           </h3>
-          <p className=" dark:text-slate-200 mb-6 max-w-lg mx-auto">
+          <p className="dark:text-slate-200 mb-6 max-w-lg mx-auto">
             Nuestro equipo está listo para ayudarte. Contáctanos por teléfono, email o agenda tu cita directamente en nuestro portal.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
