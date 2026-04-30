@@ -1,12 +1,38 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>valcare-frontend</title>
+    
+    <!-- SEO Mejorado -->
+    <meta name="description" content="ValCare — Clínica de Excelencia Médica en Lima, Perú. Especialistas en salud con tecnología de punta." />
+    <meta name="author" content="Frank Vidal Alamo" />
+    <title>ValCare — Clínica Médica</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+
+    <!-- Script para evitar flash de tema (Bloqueante para evitar parpadeo) -->
+    <script>
+      (function() {
+        try {
+          const tema = localStorage.getItem("valcare_tema");
+          const esOscuro = tema === "oscuro" || (!tema && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (esOscuro) {
+            document.documentElement.classList.add("dark");
+          } else {
+            document.documentElement.classList.remove("dark");
+          }
+        } catch (e) {
+          console.error("Error al cargar el tema:", e);
+        }
+      })();
+    </script>
   </head>
-  <body>
+  <body class="antialiased selection:bg-blue-100 selection:text-blue-900 dark:selection:bg-blue-900 dark:selection:text-blue-100">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

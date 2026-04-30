@@ -1,122 +1,155 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState, useEffect } from 'react'
+import Encabezado from "./components/Encabezado";
+import Hero from "./components/Hero";
+import { PorQueElegirnos, Especialidades, StaffMedico, Contacto } from "./components/SeccionesCore";
+import PieDePagina from "./components/PiedePagina";
+import BotonagenCita from "./components/BotonagenCita";
+import BookingEngine from "./components/BookingEngine";
+import LoginPage from "./pages/LoginPage";
+import PortalPage from "./pages/PortalPage";
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [sesion, setSesion] = useState(
+      () => JSON.parse(localStorage.getItem("valcare_sesion") || "null")
+    );
+  
+    const [pagina, setPagina] = useState(() => {
+      const sesionExistente = JSON.parse(localStorage.getItem("valcare_sesion") || "null");
+      return sesionExistente ? "portal" : "inicio";
+    });
+  
+    const [authAbierto, setAuthAbierto] = useState(false);
+    const [citaAbierta, setCitaAbierta] = useState(false);
+    const [accionTrasAuth, setAccionTrasAuth] = useState(null);
+    const [mensajeAuth, setMensajeAuth] = useState("");
+  
+    // Sincronizar sesión con página
+    useEffect(() => {
+      if (sesion && pagina === "inicio") {
+        setPagina("portal");
+      }
+    }, [sesion, pagina]);
+  
+    // Reservar cita: requiere sesión
+    const abrirReserva = () => {
+    if (sesion) {
+      setCitaAbierta(true);
+    } else {
+      setMensajeAuth("Para reservar una cita primero debes iniciar sesión.");
+      setAccionTrasAuth(() => () => setCitaAbierta(true));
+      setPagina("login"); // Redirección directa a LoginPage
+    }
+};
+  
+    // Abrir portal: requiere sesión
+    const abrirPortal = () => {
+      if (sesion) {
+        setPagina("portal");
+      } else {
+        setPagina("login");
+      }
+    };
+  
+    // Ir a login
+    const irAlLogin = () => {
+      setPagina("login");
+    };
+  
+    // Al autenticar exitosamente en login
+    const onLoginExito = (usuario) => {
+      setSesion(usuario);
+      setPagina("portal");
+    };
+  
+    // Al autenticar exitosamente en modal
+    const onAuthExito = (usuario) => {
+      setSesion(usuario);
+      setAuthAbierto(false);
+      accionTrasAuth?.();
+      setAccionTrasAuth(null);
+      setMensajeAuth("");
+      if (pagina === "inicio") {
+        setPagina("portal");
+      }
+    };
+  
+    // Cerrar sesión
+    const cerrarSesion = () => {
+      localStorage.removeItem("valcare_sesion");
+      setSesion(null);
+      setPagina("inicio");
+    };
+  
+    // Volver desde portal
+    const volverAlInicio = () => {
+      setPagina("inicio");
+    };
+  
+    /* ────────────────────── RENDERIZADO CONDICIONAL ────────────────────── */
+  
+    // PÁGINA: LOGIN
+    if (pagina === "login") {
+      return (
+        <LoginPage onLoginExito={onLoginExito} />
+      );
+    }
+  
+    // PÁGINA: PORTAL DEL PACIENTE
+    if (pagina === "portal" && sesion) {
+      return (
+        <PortalPage
+          sesion={sesion}
+          onCerrarSesion={cerrarSesion}
+          onNuevaCita={() => setCitaAbierta(true)}
+        >
+          {/* Motor de citas como modal dentro del portal */}
+          <BookingEngine
+            abierto={citaAbierta}
+            onCerrar={() => setCitaAbierta(false)}
+            sesion={sesion}
+            onRequiereAuth={() => {
+              setMensajeAuth("Para reservar una cita primero debes iniciar sesión.");
+              setAccionTrasAuth(() => () => setCitaAbierta(true));
+              setAuthAbierto(true);
+            }}
+          />
+        </PortalPage>
+      );
+    }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <div className="min-h-screen bg-[var(--color-fondo)] text-[var(--color-texto)] antialiased">
+          <Encabezado
+            sesion={sesion}
+            onAbrirPortal={abrirPortal}
+            onCerrarSesion={cerrarSesion}
+            onIrAlLogin={irAlLogin}
+          />
+    
+          <main className="pt-20">
+            <Hero onAbrirCita={abrirReserva} />
+            <PorQueElegirnos />
+            <Especialidades />
+            <StaffMedico onAbrirCita={abrirReserva} />
+            <Contacto />
+          </main>
+    
+          <PieDePagina />
+    
+          {/* FAB flotante */}
+          <BotonagenCita onClick={abrirReserva} />
+    
+          {/* Motor de citas */}
+          <BookingEngine
+            abierto={citaAbierta}
+            onCerrar={() => setCitaAbierta(false)}
+            sesion={sesion}
+            onRequiereAuth={() => {
+              setMensajeAuth("Para reservar una cita primero debes iniciar sesión.");
+              setAccionTrasAuth(() => () => setCitaAbierta(true));
+              setAuthAbierto(true);
+            }}
+          />
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  );
 }
-
-export default App
