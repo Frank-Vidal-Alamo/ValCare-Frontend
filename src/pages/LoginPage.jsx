@@ -1,13 +1,24 @@
 import { useState, useEffect } from "react";
 import {
   Mail, Lock, Eye, EyeOff, Loader2, CheckCircle, AlertCircle,
-  User, ArrowRight, Stethoscope, LogOut
+  User, ArrowRight, Stethoscope,  FileText, Calendar
 } from "lucide-react";
-import { useLocalStorage } from "../hooks/useLocalStorage";
 import { usarTema } from "../context/TemaContext";
 
 const VISTA = { LOGIN: "login", REGISTRO: "registro" };
-const ESTADO_FORM_INICIAL = { nombres: "", correo: "", contrasena: "", confirmar: "" };
+const API_URL = import.meta.env?.VITE_API_URL; 
+
+
+const ESTADO_FORM_INICIAL = { 
+  document_number: "",
+  first_name: "", 
+  last_name: "", 
+  birth_date: "",
+  gender: "MALE",
+  correo: "", 
+  contrasena: "", 
+  confirmar: "" 
+};
 
 export default function LoginPage({ onLoginExito }) {
   const [vista, setVista] = useState(VISTA.LOGIN);
@@ -16,71 +27,174 @@ export default function LoginPage({ onLoginExito }) {
   const [cargando, setCargando] = useState(false);
   const [verPass, setVerPass] = useState(false);
   const [mensaje, setMensaje] = useState(null);
-  const [usuarios] = useLocalStorage("valcare_usuarios", []);
   const { modoOscuro } = usarTema();
-
-  const cambiar = (e) => {
-    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
-    if (errores[e.target.name]) setErrores((prev) => ({ ...prev, [e.target.name]: "" }));
-    setMensaje(null);
-  };
 
   const iniciarSesion = async () => {
     const nuevosErrores = {};
     if (!form.correo.includes("@")) nuevosErrores.correo = "Correo inválido";
     if (!form.contrasena) nuevosErrores.contrasena = "Campo requerido";
+    
     if (Object.keys(nuevosErrores).length) {
       setErrores(nuevosErrores);
       return;
     }
 
     setCargando(true);
-    await new Promise((r) => setTimeout(r, 1000));
+    setMensaje(null);
 
-    const usuario = usuarios.find(
-      (u) => u.correo === form.correo && u.contrasena === form.contrasena
-    );
+    try {
+      const detallesLogin = new URLSearchParams();
+      detallesLogin.append("username", form.correo);
+      detallesLogin.append("password", form.contrasena);
 
-    if (!usuario) {
-      setMensaje({ tipo: "error", texto: "Correo o contraseña incorrectos." });
+      const respuesta = await fetch(`${API_URL}/valcare/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }, 
+        body: detallesLogin,
+      });
+
+      const data = await respuesta.json();
+
+      if (!respuesta.ok) {
+        throw new Error(data.detail || "Correo o contraseña incorrectos.");
+      }
+
+      if (data.access_token) {
+        localStorage.setItem("valcare_token", data.access_token);
+      }
+      
+      const usuarioSesion = { email: form.correo, role: "PATIENT" };
+      localStorage.setItem("valcare_sesion", JSON.stringify(usuarioSesion));
+      
+      onLoginExito(usuarioSesion);
+    } catch (error) {
+      setMensaje({ tipo: "error", texto: error.message });
+    } finally {
       setCargando(false);
-      return;
     }
-
-    localStorage.setItem("valcare_sesion", JSON.stringify(usuario));
-    setCargando(false);
-    onLoginExito(usuario);
   };
+
+  const cambiar = (e) => {
+  const { name, value } = e.target;
+
+  if (name === "document_number") {
+    // 🟢 Filtrar en tiempo real: Solo permite números y máximo 8 caracteres
+    const soloNumeros = value.replace(/\D/g, "");
+    if (soloNumeros.length <= 8) {
+      setForm((prev) => ({ ...prev, [name]: soloNumeros }));
+    }
+  } else {
+    // Comportamiento normal para el resto de los campos
+    setForm((prev) => ({ ...prev, [name]: value }));
+  }
+
+  // Limpiar el error del campo que se está editando
+  if (errores[name]) setErrores((prev) => ({ ...prev, [name]: "" }));
+  setMensaje(null);
+};
 
   const registrarse = async () => {
-    const nuevosErrores = {};
-    if (!form.nombres.trim()) nuevosErrores.nombres = "Campo requerido";
-    if (!form.correo.includes("@")) nuevosErrores.correo = "Correo inválido";
-    if (form.contrasena.length < 6) nuevosErrores.contrasena = "Mínimo 6 caracteres";
-    if (form.contrasena !== form.confirmar)
-      nuevosErrores.confirmar = "Las contraseñas no coinciden";
+  const nuevosErrores = {};
 
-    if (Object.keys(nuevosErrores).length) {
-      setErrores(nuevosErrores);
-      return;
+  // 1. Validaciones del Frontend (Primera capa de defensa)
+  if (!form.document_number.trim()) {
+    nuevosErrores.document_number = "Campo requerido";
+  } else if (form.document_number.length !== 8) {
+    nuevosErrores.document_number = "El DNI debe tener exactamente 8 dígitos";
+  }
+
+  if (!form.first_name.trim()) nuevosErrores.first_name = "Campo requerido";
+  if (!form.last_name.trim()) nuevosErrores.last_name = "Campo requerido";
+  if (!form.birth_date) nuevosErrores.birth_date = "Campo requerido";
+  if (!form.gender) nuevosErrores.gender = "Selecciona tu género";
+
+  if (!form.correo.includes("@")) {
+    nuevosErrores.correo = "Correo inválido";
+  }
+
+  // Validar contraseña con el criterio estricto del Backend (Mínimo 6 caracteres y al menos 1 número)
+  const tieneNumero = /\d/.test(form.contrasena);
+  const tieneCaracterEspecial = /[^A-Za-z0-9]/.test(form.contrasena);
+  if (form.contrasena.length < 6) {
+    nuevosErrores.contrasena = "Mínimo 6 caracteres";
+  } else if (!tieneNumero) {
+    nuevosErrores.contrasena = "La contraseña debe contener al menos un número";
+  } else if (!tieneCaracterEspecial) {
+  nuevosErrores.contrasena = "La contraseña debe contener al menos un carácter especial (ej: ., @, #, $)";
+  }
+
+  if (form.contrasena !== form.confirmar) {
+    nuevosErrores.confirmar = "Las contraseñas no coinciden";
+  }
+
+  // Si hay errores locales, detenemos el envío y los pintamos
+  if (Object.keys(nuevosErrores).length) {
+    setErrores(nuevosErrores);
+    return;
+  }
+
+  setCargando(true);
+  setMensaje(null);
+
+  try {
+    const respuesta = await fetch(`${API_URL}/valcare/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_number: form.document_number.trim(), 
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        birth_date: form.birth_date,
+        email: form.correo.trim(),
+        password: form.contrasena,
+        gender: form.gender
+      }),
+    });
+
+    const data = await respuesta.json();
+
+    if (!respuesta.ok) {
+      // 2. Manejo de Excepciones de Validación del Backend (FastAPI 422 Unprocessable Content)
+      if (respuesta.status === 422 && Array.isArray(data.detail)) {
+        const erroresFastAPI = {};
+        
+        data.detail.forEach((err) => {
+          // err.loc[1] contiene el nombre del campo que falló en el esquema Pydantic (ej: 'password')
+          const campoBackend = err.loc[1];
+          
+          // Sincronizar nombres del backend con las claves de tu estado en React
+          let campoFrontend = campoBackend;
+          if (campoBackend === "email") campoFrontend = "correo";
+          if (campoBackend === "password") campoFrontend = "contrasena";
+          
+          erroresFastAPI[campoFrontend] = err.msg; 
+        });
+
+        setErrores(erroresFastAPI);
+        throw new Error("Por favor, corrige los campos marcados por el servidor.");
+      }
+
+      // 3. Manejo de Errores de Negocio Controlados (409 Conflict, etc.)
+      throw new Error(data.detail || "Error al registrar el paciente.");
     }
 
-    setCargando(true);
-    await new Promise((r) => setTimeout(r, 1200));
+    // Registro exitoso
+    setMensaje({ tipo: "exito", texto: "¡Paciente registrado con éxito!" });
+    
+    // Almacenar la sesión con el objeto estructurado que retorna tu backend
+    if (data.token) localStorage.setItem("valcare_token", data.token);
+    localStorage.setItem("valcare_sesion", JSON.stringify(data));
+    
+    setTimeout(() => {
+      onLoginExito(data);
+    }, 1500);
 
-    const nuevoUsuario = {
-      id: `USR-${Date.now()}`,
-      nombres: form.nombres,
-      correo: form.correo,
-      contrasena: form.contrasena,
-      fechaRegistro: new Date().toISOString(),
-    };
-
-    localStorage.setItem("valcare_usuarios", JSON.stringify([...usuarios, nuevoUsuario]));
-    localStorage.setItem("valcare_sesion", JSON.stringify(nuevoUsuario));
+  } catch (error) {
+    setMensaje({ tipo: "error", texto: error.message });
+  } finally {
     setCargando(false);
-    onLoginExito(nuevoUsuario);
-  };
+  }
+};
 
   return (
     <div className={`min-h-screen w-full flex overflow-hidden ${
@@ -279,16 +393,78 @@ export default function LoginPage({ onLoginExito }) {
                 Crear mi cuenta
               </h3>
 
-              <CampoForm
-                label="Nombres completos"
-                name="nombres"
-                value={form.nombres}
-                onChange={cambiar}
-                error={errores.nombres}
-                placeholder="Juan García López"
-                icono={<User size={16} />}
-                modoOscuro={modoOscuro}
-              />
+              <CampoForm 
+              label="Nro Documento (DNI/Cédula)" 
+              name="document_number" 
+              value={form.document_number} 
+              onChange={cambiar} 
+              error={errores.document_number} 
+              placeholder="12345678"
+              maxLength={8}           
+              inputMode="numeric"
+              icono={<FileText size={16} />} 
+              modoOscuro={modoOscuro} 
+            />
+
+            <CampoForm 
+              label="Nombres" 
+              name="first_name" 
+              value={form.first_name} 
+              onChange={cambiar} 
+              error={errores.first_name} 
+              placeholder="Juan" 
+              icono={<User size={16} />} 
+              modoOscuro={modoOscuro} 
+            />
+
+            <CampoForm 
+              label="Apellidos" 
+              name="last_name" 
+              value={form.last_name} 
+              onChange={cambiar} 
+              error={errores.last_name} 
+              placeholder="García López" 
+              icono={<User size={16} />} 
+              modoOscuro={modoOscuro} 
+            />
+
+            <CampoForm 
+              label="Fecha de Nacimiento" 
+              name="birth_date" 
+              type="date" // <-- Renderiza un calendario nativo
+              value={form.birth_date} 
+              onChange={cambiar} 
+              error={errores.birth_date} 
+              icono={<Calendar size={16} />} 
+              modoOscuro={modoOscuro} 
+            />
+
+            <div>
+              <label htmlFor="gender" className={`block text-sm font-semibold mb-2 ${modoOscuro ? "text-slate-300" : "text-slate-700"}`}>
+                Género (Requerido para historial clínico) 
+              </label>
+              <div className="relative">
+                <select
+                  id="gender"
+                  name="gender"
+                  value={form.gender}
+                  onChange={cambiar}
+                  className={`w-full px-4 py-3 rounded-xl transition-all font-medium appearance-none outline-none cursor-pointer ${
+                    modoOscuro
+                      ? "bg-slate-700/50 border border-slate-600/50 text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                      : "bg-white border border-slate-200 text-slate-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                  }`}
+                >
+                  <option value="MALE">Masculino</option>
+                  <option value="FEMALE">Femenino</option>
+                  <option value="OTHER">Otro</option>
+                </select>
+                {/* Flecha decorativa del select */}
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  ▼
+                </div>
+              </div>
+            </div>
 
               <CampoForm
                 label="Correo Electrónico"
