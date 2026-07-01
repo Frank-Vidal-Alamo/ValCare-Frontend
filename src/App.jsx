@@ -112,6 +112,7 @@ export default function App() {
               setAccionTrasAuth(() => () => setCitaAbierta(true));
               setAuthAbierto(true);
             }}
+            onCitaCreada={() => setPagina("portal")}
           />
         </PortalPage>
       );
@@ -149,6 +150,7 @@ export default function App() {
               setAccionTrasAuth(() => () => setCitaAbierta(true));
               setAuthAbierto(true);
             }}
+            onCitaCreada={() => setPagina("portal")}
           />
         </div>
   );
