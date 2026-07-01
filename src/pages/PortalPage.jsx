@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
-  LogOut, CalendarPlus, FileText, CalendarClock, User, Bell,
-  CheckCircle, Clock, XCircle, Stethoscope, Menu, X, Palette
+  LogOut, CalendarPlus, CalendarClock, User, Bell,
+  CheckCircle, Clock, XCircle, Stethoscope, Menu, X, Palette,
+  CalendarDays, Printer
 } from "lucide-react";
 import { usarTema } from "../context/TemaContext";
 import { FONDOS_PORTAL } from "../data/datosClinica";
+import { traducirEspecialidad } from "../utils/traducciones";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -29,38 +31,65 @@ const ESTADO_CONFIG = {
   },
 };
 
-function exportarCitaTxt(cita, sesion) {
-  const lineas = [
-    "═══════════════════════════════════════════════",
-    "         VALSYNC — RESUMEN DE CITA MÉDICA",
-    "═══════════════════════════════════════════════",
-    `ID de Cita    : ${cita.id}`,
-    `Fecha emisión : ${new Date(cita.created_at || Date.now()).toLocaleString("es-PE")}`,
-    "───────────────────────────────────────────────",
-    "DATOS DEL PACIENTE",
-    `Nombre        : ${sesion.first_name} ${sesion.last_name}`,
-    `Correo        : ${sesion.email}`,
-    `Documento     : ${sesion.document_number}`,
-    "───────────────────────────────────────────────",
-    "DATOS DE LA CITA",
-    `Especialidad  : ${cita.specialty || "Consulta General"}`,
-    `Especialista  : ${cita.doctor || "Médico Asignado"}`,
-    `Día           : ${cita.scheduled_date}`,
-    `Hora          : ${cita.scheduled_time}`,
-    `Motivo        : ${cita.reason || "No especificado"}`,
-    `Estado        : ${(cita.status || "pendiente").toUpperCase()}`,
-    "═══════════════════════════════════════════════",
-    "ValSync Clínica Médica | Lima, Perú",
-    "═══════════════════════════════════════════════",
-  ];
+function exportarCitaPdf(cita, sesion) {
+  const estado = (cita.status || "pendiente").toUpperCase();
+  const especialidad = traducirEspecialidad(cita.specialty) || "Consulta médica";
+  const nombrePaciente = `${sesion?.first_name || "Paciente"} ${sesion?.last_name || ""}`.trim();
+  const documento = sesion?.document_number || "—";
+  const fecha = cita.scheduled_date || "—";
+  const hora = cita.scheduled_time || "—";
+  const motivo = cita.reason || "Sin observaciones";
+  const codigo = `VAL-${cita.id || "000"}`;
 
-  const blob = new Blob([lineas.join("\n")], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `valsync-cita-${cita.id}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const contenido = `
+    <html>
+      <head>
+        <title>Boleta de cita - ValSync</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 24px; color: #0f172a; background: #f8fafc; }
+          .boleta { max-width: 760px; margin: 0 auto; background: white; border-radius: 18px; overflow: hidden; box-shadow: 0 10px 30px rgba(15,23,42,.12); }
+          .encabezado { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; padding: 24px 28px; }
+          .encabezado h1 { margin: 0 0 6px; font-size: 22px; }
+          .encabezado p { margin: 0; opacity: 0.92; }
+          .contenido { padding: 24px 28px 28px; }
+          .fila { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
+          .fila:last-child { border-bottom: none; }
+          .etiqueta { color: #64748b; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+          .valor { font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 4px; }
+          .estado { display: inline-block; padding: 7px 12px; border-radius: 999px; background: #eff6ff; color: #1d4ed8; font-weight: 700; font-size: 12px; margin-bottom: 14px; }
+          .nota { margin-top: 18px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; color: #475569; font-size: 13px; }
+          .footer { margin-top: 22px; font-size: 12px; color: #64748b; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="boleta">
+          <div class="encabezado">
+            <h1>ValSync · Comprobante de cita</h1>
+            <p>Portal del paciente · Atención médica programada</p>
+          </div>
+          <div class="contenido">
+            <div class="estado">${estado}</div>
+            <div class="fila"><div><div class="etiqueta">Código</div><div class="valor">${codigo}</div></div><div><div class="etiqueta">Fecha</div><div class="valor">${fecha}</div></div></div>
+            <div class="fila"><div><div class="etiqueta">Paciente</div><div class="valor">${nombrePaciente}</div></div><div><div class="etiqueta">DNI</div><div class="valor">${documento}</div></div></div>
+            <div class="fila"><div><div class="etiqueta">Especialidad</div><div class="valor">${especialidad}</div></div><div><div class="etiqueta">Médico</div><div class="valor">${cita.doctor || "Por asignar"}</div></div></div>
+            <div class="fila"><div><div class="etiqueta">Hora</div><div class="valor">${hora}</div></div><div><div class="etiqueta">Registro</div><div class="valor">${cita.created_at ? new Date(cita.created_at).toLocaleDateString("es-PE") : "—"}</div></div></div>
+            <div class="nota"><strong>Motivo:</strong> ${motivo}</div>
+            <div class="footer">Gracias por confiar en ValSync. Presente este comprobante en su próxima visita.</div>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  const ventana = window.open("", "_blank", "width=900", "height=900");
+  if (!ventana) return;
+  ventana.document.write(contenido);
+  ventana.document.close();
+  ventana.focus();
+  setTimeout(() => {
+    ventana.print();
+    ventana.close();
+  }, 400);
 }
 
 export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, children }) {
@@ -68,6 +97,8 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
   const [palettAbierta, setPaletteAbierta] = useState(false);
   const [menuMovilAbierto, setMenuMovilAbierto] = useState(false);
   const [seccionActiva, setSeccionActiva] = useState("citas");
+  const [vistaAgenda, setVistaAgenda] = useState("lista");
+  const [notificacionesAbierta, setNotificacionesAbierta] = useState(false);
   
   // 🟢 Estados reales vinculados al backend de ValSync
   const [misCitas, setMisCitas] = useState([]);
@@ -81,16 +112,19 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
     if (f) setFondoActual(f);
   }, []);
 
-  // 🟢 Fetch asíncrono para obtener citas reales por ID de paciente
+  // 🟢 Fetch asíncrono para obtener citas reales del paciente
   useEffect(() => {
     const obtenerCitas = async () => {
       if (!sesion?.id) return;
       try {
         setCargandoCitas(true);
-        const respuesta = await fetch(`${API_URL}/appointments/patient/${sesion.id}`);
+        const token = localStorage.getItem("valcare_token");
+        const respuesta = await fetch(`${API_URL}/valcare/my-appointments`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         if (respuesta.ok) {
           const data = await respuesta.json();
-          setMisCitas(data);
+          setMisCitas(Array.isArray(data) ? data : []);
         }
       } catch (error) {
         console.error("Error cargando las citas del servidor:", error);
@@ -105,6 +139,27 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
   const citasPendientes = misCitas.filter((c) => c.status === "pendiente").length;
   const citasConfirmadas = misCitas.filter((c) => c.status === "confirmada").length;
   const fondoClase = FONDOS_PORTAL.find((f) => f.id === fondoActual)?.clase || "";
+
+  const citasAgrupadas = useMemo(() => {
+    return misCitas.reduce((acc, cita) => {
+      const key = cita.scheduled_date || "sin-fecha";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(cita);
+      return acc;
+    }, {});
+  }, [misCitas]);
+
+  const fechasAgenda = useMemo(() => Object.keys(citasAgrupadas).sort(), [citasAgrupadas]);
+
+  const formatearFechaAgenda = (fecha) => {
+    if (!fecha || fecha === "sin-fecha") return "Sin fecha";
+    return new Date(`${fecha}T12:00:00`).toLocaleDateString("es-PE", {
+      weekday: "long",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  };
 
   const cambiarFondo = (id) => {
     setFondoActual(id);
@@ -191,18 +246,44 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
               {modoOscuro ? "🌙" : "☀️"}
             </button>
 
-            <button
-              className={`relative w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
-                modoOscuro ? "hover:bg-slate-700/70 text-slate-300" : "hover:bg-slate-100 text-slate-600"
-              }`}
-            >
-              <Bell size={18} />
-              {citasPendientes > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                  {citasPendientes}
-                </span>
+            <div className="relative">
+              <button
+                onClick={() => setNotificacionesAbierta((v) => !v)}
+                className={`relative w-9 h-9 flex items-center justify-center rounded-lg transition-all hover:scale-105 ${
+                  modoOscuro ? "hover:bg-slate-700/70 text-slate-300" : "hover:bg-slate-100 text-slate-600"
+                }`}
+              >
+                <Bell size={18} />
+                {citasPendientes > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                    {citasPendientes}
+                  </span>
+                )}
+              </button>
+
+              {notificacionesAbierta && (
+                <div className={`absolute right-0 top-11 w-72 rounded-xl shadow-xl border overflow-hidden z-20 ${
+                  modoOscuro ? "bg-slate-800 border-slate-700/50" : "bg-white border-slate-200"
+                }`}>
+                  <div className={`px-4 py-3 border-b ${modoOscuro ? "border-slate-700/50" : "border-slate-100"}`}>
+                    <p className={`text-xs font-bold uppercase tracking-wider ${modoOscuro ? "text-slate-400" : "text-slate-500"}`}>
+                      Notificaciones
+                    </p>
+                  </div>
+                  <div className="p-3 space-y-2">
+                    {citasPendientes > 0 ? (
+                      <div className={`rounded-lg p-3 text-sm ${modoOscuro ? "bg-slate-700/50 text-slate-200" : "bg-slate-50 text-slate-700"}`}>
+                        Tienes <span className="font-semibold text-blue-600">{citasPendientes}</span> cita{citasPendientes > 1 ? "s" : ""} pendiente{citasPendientes > 1 ? "s" : ""} por confirmar.
+                      </div>
+                    ) : (
+                      <div className={`rounded-lg p-3 text-sm ${modoOscuro ? "text-slate-400" : "text-slate-600"}`}>
+                        No tienes nuevas notificaciones en este momento.
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
-            </button>
+            </div>
 
             <button
               onClick={handleCerrarSesion}
@@ -284,6 +365,41 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
             </div>
           </div>
 
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between mb-6">
+            <div className={`rounded-2xl px-4 py-3 border ${modoOscuro ? "bg-slate-800/50 border-slate-700/50" : "bg-white border-slate-200"}`}>
+              <div className={`text-xs font-bold uppercase tracking-[0.2em] ${modoOscuro ? "text-slate-400" : "text-slate-500"}`}>
+                Vista de agenda
+              </div>
+              <div className={`text-sm font-semibold ${modoOscuro ? "text-white" : "text-slate-900"}`}>
+                Mantén tus consultas ordenadas y listas para imprimir.
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setVistaAgenda("lista")}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  vistaAgenda === "lista"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
+                    : modoOscuro ? "bg-slate-800 text-slate-300 hover:bg-slate-700" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Lista
+              </button>
+              <button
+                onClick={() => setVistaAgenda("calendario")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  vistaAgenda === "calendario"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
+                    : modoOscuro ? "bg-slate-800 text-slate-300 hover:bg-slate-700" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                <CalendarDays size={16} />
+                Calendario
+              </button>
+            </div>
+          </div>
+
           {/* Selector de Secciones (Tabs) */}
           <div className={`flex gap-2 mb-8 border-b ${modoOscuro ? "border-slate-700/50" : "border-slate-200"}`}>
             {[
@@ -325,9 +441,51 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {misCitas.map((cita) => (
-                      <TarjetaCita key={cita.id} cita={cita} sesion={sesion} modoOscuro={modoOscuro} />
-                    ))}
+                    {vistaAgenda === "calendario" ? (
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        {fechasAgenda.map((fecha) => (
+                          <div key={fecha} className={`rounded-3xl border p-6 ${modoOscuro ? "bg-slate-800/50 border-slate-700/50" : "bg-white border-slate-200"}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className={`text-xs font-bold uppercase tracking-[0.2em] ${modoOscuro ? "text-slate-400" : "text-slate-500"}`}>
+                                  Agenda
+                                </p>
+                                <h3 className={`font-display font-bold text-lg ${modoOscuro ? "text-white" : "text-slate-900"}`}>
+                                  {formatearFechaAgenda(fecha)}
+                                </h3>
+                              </div>
+                              <span className={`rounded-full px-3 py-1 text-xs font-bold ${modoOscuro ? "bg-blue-900/40 text-blue-300" : "bg-blue-50 text-blue-700"}`}>
+                                {(citasAgrupadas[fecha] || []).length} cita(s)
+                              </span>
+                            </div>
+
+                            <div className="mt-4 space-y-3">
+                              {(citasAgrupadas[fecha] || []).map((cita) => (
+                                <div key={cita.id} className={`rounded-2xl border p-3 ${modoOscuro ? "border-slate-700/50 bg-slate-900/40" : "border-slate-200 bg-slate-50"}`}>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div>
+                                      <p className={`text-sm font-semibold ${modoOscuro ? "text-white" : "text-slate-900"}`}>
+                                        {traducirEspecialidad(cita.specialty) || "Consulta médica"}
+                                      </p>
+                                      <p className={`text-xs ${modoOscuro ? "text-slate-400" : "text-slate-600"}`}>
+                                        {cita.doctor || "Médico por asignar"}
+                                      </p>
+                                    </div>
+                                    <span className={`text-xs font-semibold ${modoOscuro ? "text-blue-300" : "text-blue-700"}`}>
+                                      {cita.scheduled_time}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      misCitas.map((cita) => (
+                        <TarjetaCita key={cita.id} cita={cita} sesion={sesion} modoOscuro={modoOscuro} />
+                      ))
+                    )}
                   </div>
                 )}
               </>
@@ -364,57 +522,67 @@ function TarjetaCita({ cita, sesion, modoOscuro }) {
   const config = ESTADO_CONFIG[cita.status] || ESTADO_CONFIG.pendiente;
 
   return (
-    <div className={`rounded-2xl p-6 border ${
+    <article className={`rounded-3xl border p-6 shadow-sm transition-all ${
       modoOscuro ? "bg-slate-800/50 border-slate-700/50 hover:border-slate-600/50" : "bg-white border-slate-200 hover:border-slate-300"
-    } transition-all`}>
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+    }`}>
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-4">
-          <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
             modoOscuro ? "bg-blue-900/40 text-blue-400" : "bg-blue-50 text-blue-600"
           }`}>
             <Stethoscope size={22} />
           </div>
           <div>
-            <h4 className={`font-bold text-base ${modoOscuro ? "text-white" : "text-slate-900"}`}>
-              {cita.specialty || "Consulta Médica"}
-            </h4>
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className={`font-bold text-base ${modoOscuro ? "text-white" : "text-slate-900"}`}>
+                {traducirEspecialidad(cita.specialty) || "Consulta Médica"}
+              </h4>
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${config.color} ${config.bg}`}>
+                {config.icono}
+                {config.etiqueta}
+              </span>
+            </div>
             <p className={`text-sm mt-0.5 ${modoOscuro ? "text-slate-400" : "text-slate-600"}`}>
               {cita.doctor || "Médico por asignar"}
             </p>
-            <p className={`text-xs mt-1 ${modoOscuro ? "text-slate-500" : "text-slate-500"}`}>
-              {cita.scheduled_date} · {cita.scheduled_time}
-            </p>
             {cita.reason && (
               <p className={`text-xs mt-2 italic ${modoOscuro ? "text-slate-400" : "text-slate-500"}`}>
-                "{cita.reason}"
+                “{cita.reason}”
               </p>
             )}
           </div>
         </div>
+      </div>
 
-        <div className="flex flex-col items-end gap-3 shrink-0">
-          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${config.color} ${config.bg}`}>
-            {config.icono}
-            {config.etiqueta}
-          </span>
-          <button
-            onClick={() => exportarCitaTxt(cita, sesion)}
-            className={`flex items-center gap-1.5 text-xs font-semibold transition-colors ${
-              modoOscuro ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-800"
-            }`}
-          >
-            <FileText size={14} /> Exportar (.txt)
-          </button>
+      <div className={`mt-5 grid gap-3 md:grid-cols-3 rounded-2xl p-4 ${modoOscuro ? "bg-slate-900/40" : "bg-slate-50"}`}>
+        <div>
+          <p className={`text-[11px] font-bold uppercase tracking-[0.2em] ${modoOscuro ? "text-slate-500" : "text-slate-500"}`}>Fecha</p>
+          <p className={`text-sm font-semibold ${modoOscuro ? "text-white" : "text-slate-900"}`}>{cita.scheduled_date}</p>
+        </div>
+        <div>
+          <p className={`text-[11px] font-bold uppercase tracking-[0.2em] ${modoOscuro ? "text-slate-500" : "text-slate-500"}`}>Hora</p>
+          <p className={`text-sm font-semibold ${modoOscuro ? "text-white" : "text-slate-900"}`}>{cita.scheduled_time}</p>
+        </div>
+        <div>
+          <p className={`text-[11px] font-bold uppercase tracking-[0.2em] ${modoOscuro ? "text-slate-500" : "text-slate-500"}`}>Registro</p>
+          <p className={`text-sm font-semibold ${modoOscuro ? "text-white" : "text-slate-900"}`}>{cita.created_at ? new Date(cita.created_at).toLocaleDateString("es-PE") : "—"}</p>
         </div>
       </div>
 
-      <div className={`mt-4 pt-4 border-t flex items-center justify-between text-xs ${
+      <div className={`mt-5 pt-4 border-t flex flex-wrap items-center justify-between gap-3 text-xs ${
         modoOscuro ? "border-slate-700/50 text-slate-500" : "border-slate-100 text-slate-500"
       }`}>
         <span className="font-mono text-[10px] opacity-70">ID: {cita.id}</span>
-        <span>Reg: {cita.created_at ? new Date(cita.created_at).toLocaleDateString("es-PE") : "—"}</span>
+        <button
+          onClick={() => exportarCitaPdf(cita, sesion)}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-2 font-semibold transition-colors ${
+            modoOscuro ? "bg-slate-700/60 text-blue-300 hover:bg-slate-700" : "bg-slate-100 text-blue-700 hover:bg-slate-200"
+          }`}
+        >
+          <Printer size={14} /> Boleta PDF
+        </button>
       </div>
-    </div>
+    </article>
   );
 }
 
