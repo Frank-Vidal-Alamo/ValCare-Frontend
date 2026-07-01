@@ -6,7 +6,7 @@ import {
 import { usarTema } from "../context/TemaContext";
 
 const VISTA = { LOGIN: "login", REGISTRO: "registro" };
-const API_URL = import.meta.env?.VITE_API_URL; 
+const API_URL = import.meta.env?.VITE_API_URL || ""; 
 
 
 const ESTADO_FORM_INICIAL = { 
@@ -28,6 +28,28 @@ export default function LoginPage({ onLoginExito }) {
   const [verPass, setVerPass] = useState(false);
   const [mensaje, setMensaje] = useState(null);
   const { modoOscuro } = usarTema();
+
+  const obtenerPerfilPaciente = async (token) => {
+    const respuesta = await fetch(`${API_URL}/valcare/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const data = await respuesta.json();
+
+    if (!respuesta.ok) {
+      throw new Error(data.detail || "No fue posible cargar tu perfil.");
+    }
+
+    return {
+      id: data.id,
+      document_number: data.document_number,
+      first_name: data.first_name,
+      last_name: data.last_name,
+      email: data.email,
+      gender: data.gender,
+      role: "PATIENT",
+    };
+  };
 
   const iniciarSesion = async () => {
     const nuevosErrores = {};
@@ -62,10 +84,10 @@ export default function LoginPage({ onLoginExito }) {
       if (data.access_token) {
         localStorage.setItem("valcare_token", data.access_token);
       }
-      
-      const usuarioSesion = { email: form.correo, role: "PATIENT" };
+
+      const usuarioSesion = await obtenerPerfilPaciente(data.access_token);
       localStorage.setItem("valcare_sesion", JSON.stringify(usuarioSesion));
-      
+
       onLoginExito(usuarioSesion);
     } catch (error) {
       setMensaje({ tipo: "error", texto: error.message });
@@ -180,13 +202,25 @@ export default function LoginPage({ onLoginExito }) {
 
     // Registro exitoso
     setMensaje({ tipo: "exito", texto: "¡Paciente registrado con éxito!" });
-    
-    // Almacenar la sesión con el objeto estructurado que retorna tu backend
-    if (data.token) localStorage.setItem("valcare_token", data.token);
-    localStorage.setItem("valcare_sesion", JSON.stringify(data));
-    
+
+    const loginResponse = await fetch(`${API_URL}/valcare/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: form.correo.trim(), password: form.contrasena }),
+    });
+
+    const loginData = await loginResponse.json();
+
+    if (!loginResponse.ok) {
+      throw new Error(loginData.detail || "No fue posible iniciar sesión automáticamente.");
+    }
+
+    const usuarioSesion = await obtenerPerfilPaciente(loginData.access_token);
+    localStorage.setItem("valcare_token", loginData.access_token);
+    localStorage.setItem("valcare_sesion", JSON.stringify(usuarioSesion));
+
     setTimeout(() => {
-      onLoginExito(data);
+      onLoginExito(usuarioSesion);
     }, 1500);
 
   } catch (error) {
