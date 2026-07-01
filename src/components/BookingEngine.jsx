@@ -1,14 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
+import { traducirEspecialidad } from "../utils/traducciones";
 import {
   X, ChevronRight, Star, Clock, CheckCircle,
-  CalendarCheck, Loader2, User, ArrowLeft,
+  CalendarCheck, Loader2, User, ArrowLeft, Search,
 } from "lucide-react";
-import {
-  ESPECIALIDADES,
-  getDoctoresPorEspecialidad,
-  getSlotsDoctorFlat,
-} from "../data/datosClinica";
-import { useLocalStorage } from "../hooks/useLocalStorage";
+
+const API_URL = import.meta.env?.VITE_API_URL || "";
 
 const PASO = { ESPECIALIDAD: 1, DOCTOR: 2, HORARIO: 3, MOTIVO: 4, CONFIRMACION: 5 };
 
@@ -21,12 +18,17 @@ const ESTADO_INICIAL = {
   sintomas:       "",
 };
 
-export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAuth }) {
+export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAuth, onCitaCreada }) {
   const [paso,      setPaso]      = useState(PASO.ESPECIALIDAD);
   const [seleccion, setSeleccion] = useState(ESTADO_INICIAL);
   const [cargando,  setCargando]  = useState(false);
   const [exito,     setExito]     = useState(false);
-  const [, setCitas]              = useLocalStorage("valcare_citas", []);
+  const [especialidades, setEspecialidades] = useState([]);
+  const [doctores, setDoctores] = useState([]);
+  const [cargandoDatos, setCargandoDatos] = useState(false);
+  const [errorReserva, setErrorReserva] = useState("");
+  const [busquedaEspecialidad, setBusquedaEspecialidad] = useState("");
+  const [busquedaDoctor, setBusquedaDoctor] = useState("");
 
   /* ── Verificar autenticación al abrir ── */
   useEffect(() => {
@@ -52,15 +54,79 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
     };
   }, [abierto, cerrarEscape]);
 
+  useEffect(() => {
+    if (!abierto || !sesion) return;
+
+    const cargarEspecialidades = async () => {
+      try {
+        setCargandoDatos(true);
+        const token = localStorage.getItem("valcare_token");
+        const respuesta = await fetch(`${API_URL}/valcare/specialties`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!respuesta.ok) throw new Error("No fue posible cargar las especialidades.");
+
+        const data = await respuesta.json();
+        setEspecialidades(Array.isArray(data) ? data : []);
+      } catch (error) {
+        setErrorReserva(error.message);
+      } finally {
+        setCargandoDatos(false);
+      }
+    };
+
+    cargarEspecialidades();
+  }, [abierto, sesion?.id]);
+
+  useEffect(() => {
+    if (!abierto || !sesion || !seleccion.especialidadId) {
+      setDoctores([]);
+      return;
+    }
+
+    const cargarDoctores = async () => {
+      try {
+        const token = localStorage.getItem("valcare_token");
+        const respuesta = await fetch(`${API_URL}/valcare/doctors?specialty_id=${seleccion.especialidadId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!respuesta.ok) throw new Error("No fue posible cargar los doctores.");
+
+        const data = await respuesta.json();
+        setDoctores(Array.isArray(data) ? data : []);
+      } catch (error) {
+        setErrorReserva(error.message);
+      }
+    };
+
+    cargarDoctores();
+  }, [abierto, sesion?.id, seleccion.especialidadId]);
+
   if (!abierto || !sesion) return null;
 
-  /* ── Datos derivados ── */
-  const doctoresFiltrados  = getDoctoresPorEspecialidad(seleccion.especialidadId);
-  const doctorSeleccionado = doctoresFiltrados.find((d) => d.id === seleccion.doctorId);
-  const horariosFlat       = seleccion.doctorId ? getSlotsDoctorFlat(seleccion.doctorId) : [];
-  const diasUnicos         = [...new Set(horariosFlat.map((h) => h.dia))];
-  const franjasDia         = horariosFlat.filter((h) => h.dia === seleccion.dia);
-  const espSeleccionada    = ESPECIALIDADES.find((e) => e.id === seleccion.especialidadId);
+  const doctorSeleccionado = doctores.find((d) => d.id === seleccion.doctorId);
+  const espSeleccionada = especialidades.find((e) => e.id === seleccion.especialidadId);
+  const especialidadesFiltradas = especialidades.filter((esp) => {
+    const texto = busquedaEspecialidad.toLowerCase().trim();
+    if (!texto) return true;
+    return esp.name?.toLowerCase().includes(texto) || esp.description?.toLowerCase().includes(texto);
+  });
+  const doctoresFiltrados = doctores.filter((doc) => {
+    const texto = busquedaDoctor.toLowerCase().trim();
+    if (!texto) return true;
+    return doc.full_name?.toLowerCase().includes(texto) || doc.specialty_name?.toLowerCase().includes(texto);
+  });
+  const diasUnicos = Array.from({ length: 5 }, (_, index) => {
+    const fecha = new Date();
+    fecha.setDate(fecha.getDate() + index);
+    return {
+      value: fecha.toISOString().slice(0, 10),
+      label: fecha.toLocaleDateString("es-PE", { weekday: "long", day: "2-digit", month: "short" }),
+    };
+  });
+  const franjasDia = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"];
 
   /* ── Navegación entre pasos ── */
   const seleccionar = (campo, valor) => {
@@ -81,29 +147,42 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
   /* ── Confirmar cita ── */
   const confirmar = async () => {
     setCargando(true);
-    await new Promise((r) => setTimeout(r, 1500));
+    setErrorReserva("");
 
-    const nuevaCita = {
-      id:            `CITA-${Date.now()}`,
-      fechaCreacion: new Date().toISOString(),
-      estado:        "pendiente",
-      correo:        sesion.correo,
-      paciente:      sesion.nombres,
-      especialidad:  espSeleccionada?.nombre || seleccion.especialidadId,
-      doctor:        doctorSeleccionado?.nombres || "",
-      dia:           seleccion.dia,
-      hora:          seleccion.franja,
-      motivo:        seleccion.motivo,
-      sintomas:      seleccion.sintomas,
-    };
+    try {
+      const token = localStorage.getItem("valcare_token");
+      const respuesta = await fetch(`${API_URL}/valcare/book-appointment`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          scheduled_date: seleccion.dia,
+          scheduled_time: `${seleccion.franja}:00`,
+          doctor_id: seleccion.doctorId,
+          reason: seleccion.motivo.trim(),
+        }),
+      });
 
-    setCitas((prev) => [...prev, nuevaCita]);
-    setCargando(false);
-    setExito(true);
+      const data = await respuesta.json();
+
+      if (!respuesta.ok) {
+        throw new Error(data.detail || "No fue posible reservar la cita.");
+      }
+
+      setCargando(false);
+      setExito(true);
+      onCitaCreada?.();
+    } catch (error) {
+      setCargando(false);
+      setErrorReserva(error.message);
+    }
   };
 
   const cerrarYReiniciar = () => {
     setExito(false);
+    setErrorReserva("");
     setSeleccion(ESTADO_INICIAL);
     setPaso(PASO.ESPECIALIDAD);
     onCerrar();
@@ -174,7 +253,7 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
                 Cita Confirmada
               </h3>
               <p className="text-slate-500 dark:text-slate-400 mb-2">
-                Tu cita con <strong className="text-slate-800 dark:text-slate-200">{doctorSeleccionado?.nombres}</strong>
+                Tu cita con <strong className="text-slate-800 dark:text-slate-200">{doctorSeleccionado?.full_name}</strong>
               </p>
               <p className="text-slate-500 dark:text-slate-400 mb-8">
                 {seleccion.dia} a las {seleccion.franja}
@@ -188,36 +267,81 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
           {/* ── PASO 1: ESPECIALIDADES ── */}
           {!exito && paso === PASO.ESPECIALIDAD && (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-7 shadow-xl shadow-black/10">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {ESPECIALIDADES.map((esp) => (
-                  <button
-                    key={esp.id}
-                    onClick={() => seleccionar("especialidadId", esp.id)}
-                    className={`p-5 rounded-2xl border-2 text-left transition-all duration-200 hover:border-blue-500 dark:hover:border-blue-400 hover:-translate-y-1 ${
-                      seleccion.especialidadId === esp.id
-                        ? "border-blue-600 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20"
-                        : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50"
-                    }`}
-                  >
-                    <div className="font-display font-bold text-slate-900 dark:text-white text-sm mb-1">
-                      {esp.nombre}
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                      <ChevronRight size={12} />
-                      Ver médicos
-                    </div>
-                  </button>
-                ))}
+              <div className="mb-4">
+                <label htmlFor="buscar-especialidad" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Buscar especialidad
+                </label>
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="buscar-especialidad"
+                    type="text"
+                    value={busquedaEspecialidad}
+                    onChange={(e) => setBusquedaEspecialidad(e.target.value)}
+                    placeholder="Escribe el nombre de la especialidad"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-10 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  />
+                </div>
               </div>
+              {cargandoDatos ? (
+                <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">Cargando especialidades...</div>
+              ) : especialidadesFiltradas.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  No encontramos especialidades con ese nombre.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {especialidadesFiltradas.map((esp) => (
+                    <button
+                      key={esp.id}
+                      onClick={() => seleccionar("especialidadId", esp.id)}
+                      className={`p-5 rounded-2xl border-2 text-left transition-all duration-200 hover:border-blue-500 dark:hover:border-blue-400 hover:-translate-y-1 ${
+                        seleccion.especialidadId === esp.id
+                          ? "border-blue-600 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20"
+                          : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50"
+                      }`}
+                    >
+                      <div className="font-display font-bold text-slate-900 dark:text-white text-sm mb-1">
+                        {traducirEspecialidad(esp.name)}
+                      </div>
+                      {esp.description && (
+                        <div className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                          {esp.description}
+                        </div>
+                      )}
+                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-2">
+                        <ChevronRight size={12} />
+                        Ver médicos
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
           {/* ── PASO 2: DOCTORES ── */}
           {!exito && paso === PASO.DOCTOR && (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-7 shadow-xl shadow-black/10">
+              <div className="mb-4">
+                <label htmlFor="buscar-doctor" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Buscar doctor o especialidad
+                </label>
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="buscar-doctor"
+                    type="text"
+                    value={busquedaDoctor}
+                    onChange={(e) => setBusquedaDoctor(e.target.value)}
+                    placeholder="Escribe el nombre del profesional"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-10 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  />
+                </div>
+              </div>
               {doctoresFiltrados.length === 0 ? (
                 <p className="text-center text-slate-500 dark:text-slate-400 py-8">
-                  No hay especialistas disponibles para esta área en este momento.
+                  No hay especialistas que coincidan con tu búsqueda en este momento.
                 </p>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
@@ -231,23 +355,18 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
                           : "border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500"
                       }`}
                     >
-                      {/* Foto del doctor — en color, sin filtros */}
-                      <div className="w-16 h-16 rounded-2xl overflow-hidden mb-4">
-                        <img
-                          src={doc.imagen}
-                          alt={doc.nombres}
-                          className="w-full h-full object-cover"
-                        />
+                      <div className="w-16 h-16 rounded-2xl overflow-hidden mb-4 bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+                        <User size={24} />
                       </div>
                       <h4 className="font-display font-bold text-slate-900 dark:text-white text-sm mb-1">
-                        {doc.nombres}
+                        {doc.full_name}
                       </h4>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mb-3 uppercase tracking-wide">
-                        {doc.cargo}
+                        {traducirEspecialidad(doc.specialty_name) || "Especialidad asignada"}
                       </p>
                       <div className="flex items-center gap-1.5 text-xs text-amber-500">
                         <Star size={12} fill="currentColor" />
-                        <span>{doc.rating}</span>
+                        <span>Disponible</span>
                       </div>
                     </button>
                   ))}
@@ -267,15 +386,15 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
                 <div className="flex flex-wrap gap-2">
                   {diasUnicos.map((dia) => (
                     <button
-                      key={dia}
-                      onClick={() => setSeleccion((p) => ({ ...p, dia, franja: "" }))}
+                      key={dia.value}
+                      onClick={() => setSeleccion((p) => ({ ...p, dia: dia.value, franja: "" }))}
                       className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${
-                        seleccion.dia === dia
+                        seleccion.dia === dia.value
                           ? "border-blue-600 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
                           : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500"
                       }`}
                     >
-                      {dia}
+                      {dia.label}
                     </button>
                   ))}
                 </div>
@@ -289,17 +408,17 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
                     Horarios disponibles — {seleccion.dia}
                   </p>
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                    {franjasDia.map((h) => (
+                    {franjasDia.map((franja) => (
                       <button
-                        key={h.id}
-                        onClick={() => seleccionar("franja", h.franja)}
+                        key={franja}
+                        onClick={() => seleccionar("franja", franja)}
                         className={`py-3 px-2 rounded-xl border-2 text-sm font-semibold transition-all ${
-                          seleccion.franja === h.franja
+                          seleccion.franja === franja
                             ? "border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500 text-white"
                             : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10"
                         }`}
                       >
-                        {h.franja}
+                        {franja}
                       </button>
                     ))}
                   </div>
@@ -365,25 +484,24 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
                 {sesion?.avatar || <User size={18} />}
               </div>
               <div>
-                <div className="text-sm font-bold text-slate-900 dark:text-white">{sesion?.nombres}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">{sesion?.correo}</div>
+                <div className="text-sm font-bold text-slate-900 dark:text-white">{sesion?.first_name} {sesion?.last_name}</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">{sesion?.email}</div>
               </div>
             </div>
 
-            {/* Resumen de selección */}
-            <div>
+            <div className="pt-2">
               <p className="text-xs font-bold text-blue-600 dark:text-blue-400 tracking-widest uppercase mb-4">
                 Resumen de Cita
               </p>
               <div className="space-y-4">
                 <FilaResumen
                   etiqueta="Especialidad"
-                  valor={espSeleccionada?.nombre}
+                  valor={espSeleccionada?.name}
                   vacio="Sin seleccionar"
                 />
                 <FilaResumen
                   etiqueta="Especialista"
-                  valor={doctorSeleccionado?.nombres}
+                  valor={doctorSeleccionado?.full_name}
                   vacio="Sin seleccionar"
                 />
                 <FilaResumen
@@ -420,16 +538,23 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
 
             {/* Botón confirmar (solo en paso de confirmación) */}
             {paso === PASO.CONFIRMACION && !exito && (
-              <button
-                onClick={confirmar}
-                disabled={cargando}
-                className="w-full btn-primario flex items-center justify-center gap-3 py-4 disabled:opacity-60"
-              >
-                {cargando
-                  ? <><Loader2 size={20} className="animate-spin" /> Guardando...</>
-                  : <><CalendarCheck size={20} /> Confirmar Cita</>
-                }
-              </button>
+              <>
+                {errorReserva && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300">
+                    {errorReserva}
+                  </div>
+                )}
+                <button
+                  onClick={confirmar}
+                  disabled={cargando}
+                  className="w-full btn-primario flex items-center justify-center gap-3 py-4 disabled:opacity-60"
+                >
+                  {cargando
+                    ? <><Loader2 size={20} className="animate-spin" /> Guardando...</>
+                    : <><CalendarCheck size={20} /> Confirmar Cita</>
+                  }
+                </button>
+              </>
             )}
 
             {/* Info de seguridad */}
