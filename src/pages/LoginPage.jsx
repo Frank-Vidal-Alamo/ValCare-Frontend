@@ -10,6 +10,7 @@ const API_URL = import.meta.env?.VITE_API_URL || "";
 
 
 const ESTADO_FORM_INICIAL = { 
+  tipo_doc: "DNI",
   document_number: "",
   first_name: "", 
   last_name: "", 
@@ -37,7 +38,27 @@ export default function LoginPage({ onLoginExito }) {
     const data = await respuesta.json();
 
     if (!respuesta.ok) {
-      throw new Error(data.detail || "No fue posible cargar tu perfil.");
+  // Si el backend te dice específicamente que el correo ya existe
+  // Ajusta el string "El correo ya existe" según lo que devuelva tu backend (en inglés o español)
+  if (data.detail && data.detail.toLowerCase().includes("email")) {
+    setErrores((prev) => ({ 
+      ...prev, 
+      correo: "Este correo electrónico ya se encuentra registrado." 
+    }));
+    throw new Error("El correo ingresado ya está en uso.");
+  }
+
+  // Si es otro tipo de error de negocio (ej. DNI duplicado)
+  if (data.detail && (data.detail.toLowerCase().includes("document") || data.detail.toLowerCase().includes("dni"))) {
+    setErrores((prev) => ({ 
+      ...prev, 
+      document_number: "Este número de documento ya está registrado." 
+    }));
+    throw new Error("El documento ingresado ya está en uso.");
+      }
+
+      // Error genérico si no coincide con los anteriores
+      throw new Error(data.detail || "Error al registrar el paciente.");
     }
 
     return {
@@ -99,18 +120,31 @@ export default function LoginPage({ onLoginExito }) {
   const cambiar = (e) => {
   const { name, value } = e.target;
 
-  if (name === "document_number") {
-    // 🟢 Filtrar en tiempo real: Solo permite números y máximo 8 caracteres
-    const soloNumeros = value.replace(/\D/g, "");
-    if (soloNumeros.length <= 8) {
-      setForm((prev) => ({ ...prev, [name]: soloNumeros }));
+  if (name === "tipo_doc") {
+    // Si cambia de tipo de documento, reseteamos el número para evitar conflictos de longitud
+    setForm((prev) => ({ ...prev, [name]: value, document_number: "" }));
+    setErrores((prev) => ({ ...prev, document_number: "" }));
+  } 
+  else if (name === "document_number") {
+    if (form.tipo_doc === "DNI") {
+      // 🇵🇪 Reglas para DNI: Solo números y máximo 8 caracteres
+      const soloNumeros = value.replace(/\D/g, "");
+      if (soloNumeros.length <= 8) {
+        setForm((prev) => ({ ...prev, [name]: soloNumeros }));
+      }
+    } else {
+      //Reglas para CE / Pasaporte: Permitir letras y números (alfanumérico), máximo 12 caracteres
+      const alfanumerico = value.replace(/[^a-zA-Z0-9]/g, "");
+      if (alfanumerico.length <= 12) {
+        setForm((prev) => ({ ...prev, [name]: alfanumerico.toUpperCase() })); 
+      }
     }
-  } else {
-    // Comportamiento normal para el resto de los campos
+  } 
+  else {
+    // Comportamiento normal para el resto de campos
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
-  // Limpiar el error del campo que se está editando
   if (errores[name]) setErrores((prev) => ({ ...prev, [name]: "" }));
   setMensaje(null);
 };
@@ -121,9 +155,19 @@ export default function LoginPage({ onLoginExito }) {
   // 1. Validaciones del Frontend (Primera capa de defensa)
   if (!form.document_number.trim()) {
     nuevosErrores.document_number = "Campo requerido";
-  } else if (form.document_number.length !== 8) {
-    nuevosErrores.document_number = "El DNI debe tener exactamente 8 dígitos";
-  }
+    } else {
+      // Entra aquí si el campo NO está vacío, ahora evaluamos según el tipo
+      if (form.tipo_doc === "DNI") {
+        if (form.document_number.length !== 8) {
+          nuevosErrores.document_number = "El DNI debe tener exactamente 8 dígitos";
+        }
+      } else {
+        // Esto se ejecuta para CE o PASAPORTE
+        if (form.document_number.length < 6) {
+          nuevosErrores.document_number = `El ${form.tipo_doc} debe tener al menos 6 caracteres`;
+        }
+      }
+    }
 
   if (!form.first_name.trim()) nuevosErrores.first_name = "Campo requerido";
   if (!form.last_name.trim()) nuevosErrores.last_name = "Campo requerido";
@@ -179,27 +223,45 @@ export default function LoginPage({ onLoginExito }) {
       // 2. Manejo de Excepciones de Validación del Backend (FastAPI 422 Unprocessable Content)
       if (respuesta.status === 422 && Array.isArray(data.detail)) {
         const erroresFastAPI = {};
-        
         data.detail.forEach((err) => {
-          // err.loc[1] contiene el nombre del campo que falló en el esquema Pydantic (ej: 'password')
           const campoBackend = err.loc[1];
-          
-          // Sincronizar nombres del backend con las claves de tu estado en React
           let campoFrontend = campoBackend;
           if (campoBackend === "email") campoFrontend = "correo";
           if (campoBackend === "password") campoFrontend = "contrasena";
-          
           erroresFastAPI[campoFrontend] = err.msg; 
         });
-
         setErrores(erroresFastAPI);
         throw new Error("Por favor, corrige los campos marcados por el servidor.");
       }
 
-      // 3. Manejo de Errores de Negocio Controlados (409 Conflict, etc.)
+      // 3. 🔥 CONTROL DE DUPLICADOS (409 Conflict y errores controlados)
+      if (respuesta.status === 409 || data.detail) {
+        const mensajeError = String(data.detail).toLowerCase();
+        const erroresDuplicados = {};
+
+        // Caso A: El correo ya existe
+        if (mensajeError.includes("email") || mensajeError.includes("correo")) {
+          erroresDuplicados.correo = "Este correo electrónico ya se encuentra registrado.";
+          setErrores((prev) => ({ ...prev, ...erroresDuplicados }));
+          throw new Error("El correo ingresado ya está en uso por otro paciente.");
+        }
+
+        // Caso B: El documento (DNI, CE, Pasaporte) ya existe
+        if (
+          mensajeError.includes("document") || 
+          mensajeError.includes("number") || 
+          mensajeError.includes("dni") || 
+          mensajeError.includes("already exists") // Texto común en excepciones de BD
+        ) {
+          erroresDuplicados.document_number = `Este número de ${form.tipo_doc} ya se encuentra registrado.`;
+          setErrores((prev) => ({ ...prev, ...erroresDuplicados }));
+          throw new Error(`El número de ${form.tipo_doc} ingresado ya está en uso.`);
+        }
+      }
+
+      // 4. Error genérico si no encaja en los anteriores
       throw new Error(data.detail || "Error al registrar el paciente.");
     }
-
     // Registro exitoso
     setMensaje({ tipo: "exito", texto: "¡Paciente registrado con éxito!" });
 
@@ -427,15 +489,42 @@ export default function LoginPage({ onLoginExito }) {
                 Crear mi cuenta
               </h3>
 
+              {/* Selector de Tipo de Documento */}
+              <div>
+                <label htmlFor="tipo_doc" className={`block text-sm font-semibold mb-2 ${modoOscuro ? "text-slate-300" : "text-slate-700"}`}>
+                  Tipo de Documento
+                </label>
+                <div className="relative">
+                  <select
+                    id="tipo_doc"
+                    name="tipo_doc"
+                    value={form.tipo_doc}
+                    onChange={cambiar}
+                    className={`w-full px-4 py-3 rounded-xl transition-all font-medium appearance-none outline-none cursor-pointer ${
+                      modoOscuro
+                        ? "bg-slate-700/50 border border-slate-600/50 text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                        : "bg-white border border-slate-200 text-slate-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    }`}
+                  >
+                    <option value="DNI">DNI (Persona Natural)</option>
+                    <option value="CE">Carnet de Extranjería</option>
+                    <option value="PASAPORTE">Pasaporte</option>
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    ▼
+                  </div>
+                </div>
+              </div>
+
               <CampoForm 
-              label="Nro Documento (DNI/Cédula)" 
+              label={`Nro. de Documento (${form.tipo_doc})`} 
               name="document_number" 
               value={form.document_number} 
               onChange={cambiar} 
               error={errores.document_number} 
-              placeholder="12345678"
-              maxLength={8}           
-              inputMode="numeric"
+              placeholder={form.tipo_doc === "DNI" ? "12345678" : "ABC123456"}
+              maxLength={form.tipo_doc === "DNI" ? 8 : 12}          
+              inputMode={form.tipo_doc === "DNI" ? "numeric" : "text"}
               icono={<FileText size={16} />} 
               modoOscuro={modoOscuro} 
             />
