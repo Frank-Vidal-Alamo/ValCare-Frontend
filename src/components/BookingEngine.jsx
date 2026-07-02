@@ -25,6 +25,8 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
   const [exito,     setExito]     = useState(false);
   const [especialidades, setEspecialidades] = useState([]);
   const [doctores, setDoctores] = useState([]);
+  const [horariosDisponibles, setHorariosDisponibles] = useState([]);
+  const [cargandoHorarios, setCargandoHorarios] = useState(false);
   const [cargandoDatos, setCargandoDatos] = useState(false);
   const [errorReserva, setErrorReserva] = useState("");
   const [busquedaEspecialidad, setBusquedaEspecialidad] = useState("");
@@ -104,6 +106,41 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
     cargarDoctores();
   }, [abierto, sesion?.id, seleccion.especialidadId]);
 
+    // ── Cargar Horarios Disponibles desde la API ──
+  useEffect(() => {
+    if (!abierto || !sesion || !seleccion.doctorId || !seleccion.dia) {
+      setHorariosDisponibles([]);
+      return;
+    }
+
+    const cargarHorariosDelDoctor = async () => {
+      try {
+        setCargandoHorarios(true);
+        const token = localStorage.getItem("valcare_token");
+        
+        // 🚨 OJO: Si tu backend filtra por el ID de perfil, asegúrate de que tu endpoint 
+        // de FastAPI resuelva internamente si recibe el staff_id, o pásale el ID correcto.
+        const respuesta = await fetch(
+          `${API_URL}/valcare/schedules?doctor_id=${seleccion.doctorId}&date=${seleccion.dia}`, 
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (!respuesta.ok) throw new Error("No se pudieron obtener los horarios.");
+
+        const data = await respuesta.json();
+        // Asumiendo que tu backend devuelve una lista de objetos con el campo .scheduled_time o un array de strings
+        // Ejemplo de formateo si devuelve objetos: data.map(h => h.scheduled_time.slice(0, 5))
+        setHorariosDisponibles(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("Error al traer horarios:", error);
+      } finally {
+        setCargandoHorarios(false);
+      }
+    };
+
+    cargarHorariosDelDoctor();
+  }, [abierto, sesion?.id, seleccion.doctorId, seleccion.dia]); // Se dispara al cambiar doctor o día
+
   if (!abierto || !sesion) return null;
 
   const doctorSeleccionado = doctores.find((d) => d.id === seleccion.doctorId);
@@ -113,11 +150,13 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
     if (!texto) return true;
     return esp.name?.toLowerCase().includes(texto) || esp.description?.toLowerCase().includes(texto);
   });
+
   const doctoresFiltrados = doctores.filter((doc) => {
     const texto = busquedaDoctor.toLowerCase().trim();
     if (!texto) return true;
     return doc.full_name?.toLowerCase().includes(texto) || doc.specialty_name?.toLowerCase().includes(texto);
   });
+
   const diasUnicos = Array.from({ length: 5 }, (_, index) => {
     const fecha = new Date();
     fecha.setDate(fecha.getDate() + index);
@@ -126,7 +165,7 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
       label: fecha.toLocaleDateString("es-PE", { weekday: "long", day: "2-digit", month: "short" }),
     };
   });
-  const franjasDia = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"];
+
 
   /* ── Navegación entre pasos ── */
   const seleccionar = (campo, valor) => {
@@ -376,6 +415,7 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
           )}
 
           {/* ── PASO 3: HORARIOS ── */}
+          {/* ── PASO 3: HORARIOS ── */}
           {!exito && paso === PASO.HORARIO && (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-7 shadow-xl shadow-black/10 space-y-6">
               {/* Selección de día */}
@@ -400,28 +440,46 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
                 </div>
               </div>
 
-              {/* Slots de hora */}
+              {/* Slots de hora dinámicos */}
               {seleccion.dia && (
                 <div>
                   <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                     <Clock size={14} />
                     Horarios disponibles — {seleccion.dia}
                   </p>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                    {franjasDia.map((franja) => (
-                      <button
-                        key={franja}
-                        onClick={() => seleccionar("franja", franja)}
-                        className={`py-3 px-2 rounded-xl border-2 text-sm font-semibold transition-all ${
-                          seleccion.franja === franja
-                            ? "border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500 text-white"
-                            : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10"
-                        }`}
-                      >
-                        {franja}
-                      </button>
-                    ))}
-                  </div>
+
+                  {cargandoHorarios ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 py-4">
+                      <Loader2 size={16} className="animate-spin text-blue-500" />
+                      Consultando agenda del especialista...
+                    </div>
+                  ) : horariosDisponibles.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 p-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                      ⚠️ El especialista no cuenta con turnos disponibles para el día seleccionado.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                      {horariosDisponibles.map((horario) => {
+                        // Adaptar según cómo envíe la hora tu backend (si manda string suelto u objeto)
+                        const horaTexto = typeof horario === "string" ? horario : horario.scheduled_time?.slice(0, 5);
+                        const idHorario = typeof horario === "string" ? horario : horario.id;
+
+                        return (
+                          <button
+                            key={idHorario}
+                            onClick={() => seleccionar("franja", horaTexto)}
+                            className={`py-3 px-2 rounded-xl border-2 text-sm font-semibold transition-all ${
+                              seleccion.franja === horaTexto
+                                ? "border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500 text-white"
+                                : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10"
+                            }`}
+                          >
+                            {horaTexto}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
