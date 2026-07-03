@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useMemo , useState, useEffect, useCallback } from "react";
 import { traducirEspecialidad } from "../utils/traducciones";
+import SelectorAgendaSemanal from "./Calendario";
 import {
   X, ChevronRight, Star, Clock, CheckCircle,
   CalendarCheck, Loader2, User, ArrowLeft, Search,
@@ -14,6 +15,9 @@ const ESTADO_INICIAL = {
   doctorId:       "",
   dia:            "",
   franja:         "",
+  hora:           "",
+  horaTexto:      "",
+  horaId:         null,
   motivo:         "",
   sintomas:       "",
 };
@@ -31,6 +35,9 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
   const [errorReserva, setErrorReserva] = useState("");
   const [busquedaEspecialidad, setBusquedaEspecialidad] = useState("");
   const [busquedaDoctor, setBusquedaDoctor] = useState("");
+  const [todosLosHorarios, setTodosLosHorarios] = useState([]);
+  const [modoOscuro] = useState(false);
+  
 
   /* ── Verificar autenticación al abrir ── */
   useEffect(() => {
@@ -107,45 +114,139 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
   }, [abierto, sesion?.id, seleccion.especialidadId]);
 
     // ── Cargar Horarios Disponibles desde la API ──
-  useEffect(() => {
-    if (!abierto || !sesion || !seleccion.doctorId || !seleccion.dia) {
-      setHorariosDisponibles([]);
-      return;
-    }
+ useEffect(() => {
+  if (!abierto || !sesion || !seleccion.doctorId || !seleccion.dia) {
+    setHorariosDisponibles([]);
+    return;
+  }
 
-    const cargarHorariosDelDoctor = async () => {
-      try {
-        setCargandoHorarios(true);
-        const token = localStorage.getItem("valcare_token");
-        
-        // de FastAPI resuelva internamente si recibe el staff_id, o pásale el ID correcto.
-        const respuesta = await fetch(
-          `${API_URL}/valcare/schedules?doctor_id=${seleccion.doctorId}&date=${seleccion.dia}`, 
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+  const cargarHorariosDelDoctor = async () => {
+    try {
+      setCargandoHorarios(true);
+      const token = localStorage.getItem("valcare_token");
+      
+      // 🟢 Enviamos obligatoriamente ambos parámetros estructurados como el backend los espera
+      const respuesta = await fetch(
+        `${API_URL}/valcare/schedules?doctor_id=${seleccion.doctorId}&date=${seleccion.dia}`, 
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
-        if (!respuesta.ok) throw new Error("No se pudieron obtener los horarios.");
-
-        const data = await respuesta.json();
-        
-        setHorariosDisponibles(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error("Error al traer horarios:", error);
-      } finally {
-        setCargandoHorarios(false);
+      if (!respuesta.ok) {
+        if (respuesta.status === 422) {
+          console.error("Error 422: Los parámetros enviados no coinciden con el esquema del backend.");
+        }
+        throw new Error("No se pudieron obtener los horarios.");
       }
-    };
 
-    cargarHorariosDelDoctor();
-  }, [abierto, sesion?.id, seleccion.doctorId, seleccion.dia]); // Se dispara al cambiar doctor o día
+      const data = await respuesta.json();
+      console.log("Datos que vienen de FastAPI:", data);
+      
+      // Guardamos los turnos del día en tu estado original
+      setHorariosDisponibles(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error al traer horarios:", error);
+      setHorariosDisponibles([]);
+    } finally {
+      setCargandoHorarios(false);
+    }
+  };
+
+  cargarHorariosDelDoctor();
+}, [abierto, sesion?.id, seleccion.doctorId, seleccion.dia]);
+
+
+// ── 3. Filtrar DINÁMICAMENTE solo los días que tienen horas disponibles ──
+const diasConHorasDisponibles = useMemo(() => {
+  // Extraemos las fechas únicas de los horarios disponibles que vengan del backend
+  const fechasConTurnos = todosLosHorarios
+    .filter(turno => turno.is_available) // Solo si el turno no está ocupado
+    .map(turno => turno.date); // Ej: "2026-07-03"
+
+  const fechasUnicas = [...new Set(fechasConTurnos)].sort();
+
+  return fechasUnicas.map(fechaStr => {
+    // Convertimos el string "YYYY-MM-DD" a objeto Date de forma segura local
+    const [year, month, day] = fechaStr.split('-').map(Number);
+    const fechaLocal = new Date(year, month - 1, day);
+
+    return {
+      value: fechaStr,
+      label: fechaLocal.toLocaleDateString("es-PE", { weekday: "short", day: "2-digit" }),
+      nombreDia: fechaLocal.toLocaleDateString("es-PE", { weekday: "short" }),
+      numeroDia: fechaLocal.toLocaleDateString("es-PE", { day: "2-digit" })
+    };
+  });
+}, [todosLosHorarios]);
+
+// ── 1. Estado para controlar la semana que se está visualizando ──
+// Inicializa el lunes de la semana actual de forma local segura
+const [fechaBase, setFechaBase] = useState(() => {
+  const hoy = new Date();
+  const diaSemana = hoy.getDay();
+  const distanciaAlLunes = diaSemana === 0 ? -6 : 1 - diaSemana;
+  const lunes = new Date(hoy);
+  lunes.setDate(hoy.getDate() + distanciaAlLunes);
+  return lunes;
+});
+
+
+  const diasDeLaSemana = useMemo(() => {
+  return Array.from({ length: 7 }, (_, index) => {
+    const fecha = new Date(fechaBase);
+    fecha.setDate(fechaBase.getDate() + index);
+    return {
+      value: fecha.toISOString().slice(0, 10), // "2026-07-03"
+      numeroDia: fecha.getDate(),
+      nombreDia: fecha.toLocaleDateString("es-PE", { weekday: "short" }),
+      mesAnio: fecha.toLocaleDateString("es-PE", { month: "long", year: "numeric" })
+    };
+  });
+}, [fechaBase]);
+
+// Título dinámico para la cabecera (ej: "Julio 2026")
+const rangoMesAnio = diasDeLaSemana[0]?.mesAnio || "";
+
+
+// ── 3. Funciones para navegar en el tiempo (7 días por click) ──
+const semanaAnterior = () => {
+  setFechaBase(prev => {
+    const nueva = new Date(prev);
+    nueva.setDate(prev.getDate() - 7);
+    return nueva;
+  });
+};
+
+const semanaSiguiente = () => {
+  setFechaBase(prev => {
+    const nueva = new Date(prev);
+    nueva.setDate(prev.getDate() + 7);
+    return nueva;
+  });
+};
+// ── 4. Horas específicas que se muestran al dar click a un día del mapa ──
+const seleccionarDiaYLimpiar = (diaValue) => {
+  setSeleccion({
+    ...seleccion,
+    dia: diaValue,
+    horaId: null,
+    horaTexto: "",
+    franja: "",
+    hora: "",
+    horaId: null,
+  });
+};
 
   if (!abierto || !sesion) return null;
 
   const doctorSeleccionado = doctores.find((d) => d.id === seleccion.doctorId);
   const espSeleccionada = especialidades.find((e) => e.id === seleccion.especialidadId);
   const especialidadesFiltradas = especialidades.filter((esp) => {
-    const texto = busquedaEspecialidad.toLowerCase().trim();
-    if (!texto) return true;
+  const texto = busquedaEspecialidad.toLowerCase().trim();
+
+
+  
+  
+  if (!texto) return true;
     return esp.name?.toLowerCase().includes(texto) || esp.description?.toLowerCase().includes(texto);
   });
 
@@ -196,7 +297,7 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
         },
         body: JSON.stringify({
           scheduled_date: seleccion.dia,
-          scheduled_time: `${seleccion.franja}:00`,
+          scheduled_time: `${(seleccion.hora || seleccion.franja || seleccion.horaTexto) || ""}:00`,
           doctor_id: seleccion.doctorId,
           reason: seleccion.motivo.trim(),
         }),
@@ -413,75 +514,184 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
           )}
 
           {/* ── PASO 3: HORARIOS ── */}
-          {/* ── PASO 3: HORARIOS ── */}
+
           {!exito && paso === PASO.HORARIO && (
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-7 shadow-xl shadow-black/10 space-y-6">
-              {/* Selección de día */}
-              <div>
-                <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-3">
-                  Día de atención
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {diasUnicos.map((dia) => (
-                    <button
-                      key={dia.value}
-                      onClick={() => setSeleccion((p) => ({ ...p, dia: dia.value, franja: "" }))}
-                      className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${
-                        seleccion.dia === dia.value
-                          ? "border-blue-600 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                          : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500"
-                      }`}
-                    >
-                      {dia.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+         <div className={`mt-6 rounded-3xl border overflow-hidden shadow-sm ${modoOscuro ? "border-slate-700/60 bg-slate-950/20" : "border-slate-200 bg-white"}`}>
+  
+  {/* ── 1. BOTONERA DE NAVEGACIÓN SEMANAL ── */}
+  <div className={`flex items-center justify-between px-4 py-3 border-b ${modoOscuro ? "border-slate-700/60 bg-slate-900/30" : "border-slate-200 bg-slate-50/50"}`}>
+    <span className={`text-sm font-bold capitalize ${modoOscuro ? "text-slate-200" : "text-slate-700"}`}>
+      {rangoMesAnio}
+    </span>
+    <div className="flex gap-1">
+      <button
+        type="button"
+        onClick={semanaAnterior}
+        className={`p-2 rounded-xl border text-xs font-bold transition-all ${
+          modoOscuro ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+        }`}
+      >
+        ◀ Sem. Anterior
+      </button>
+      <button
+        type="button"
+        onClick={() => setFechaBase(new Date())} // Botón para volver a la semana de hoy
+        className={`px-3 py-2 rounded-xl text-xs font-semibold ${
+          modoOscuro ? "bg-slate-800 text-blue-400" : "bg-blue-50 text-blue-600"
+        }`}
+      >
+        Hoy
+      </button>
+      <button
+        type="button"
+        onClick={semanaSiguiente}
+        className={`p-2 rounded-xl border text-xs font-bold transition-all ${
+          modoOscuro ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+        }`}
+      >
+        Sem. Siguiente ▶
+      </button>
+    </div>
+  </div>
 
-              {/* Slots de hora dinámicos */}
-              {seleccion.dia && (
-                <div>
-                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <Clock size={14} />
-                    Horarios disponibles — {seleccion.dia}
-                  </p>
+  {/* ── 2. CABECERA DE DÍAS (Clickables para consultar las horas) ── */}
+  <div className={`grid grid-cols-7 border-b text-center divide-x divide-slate-200/40 dark:divide-slate-700/30 ${modoOscuro ? "border-slate-700/60 bg-slate-900/50" : "border-slate-200 bg-slate-50/70"}`}>
+    {diasDeLaSemana.map((dia) => {
+      const esHoy = new Date().toISOString().slice(0, 10) === dia.value;
+      const esDiaSeleccionado = seleccion.dia === dia.value;
 
-                  {cargandoHorarios ? (
-                    <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 py-4">
-                      <Loader2 size={16} className="animate-spin text-blue-500" />
-                      Consultando agenda del especialista...
-                    </div>
-                  ) : horariosDisponibles.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 p-6 text-center text-sm text-slate-500 dark:text-slate-400">
-                      ⚠️ El especialista no cuenta con turnos disponibles para el día seleccionado.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                      {horariosDisponibles.map((horario) => {
-                        // Adaptar según cómo envíe la hora tu backend (si manda string suelto u objeto)
-                        const horaTexto = typeof horario === "string" ? horario : horario.scheduled_time?.slice(0, 5);
-                        const idHorario = typeof horario === "string" ? horario : horario.id;
+      return (
+        <button
+          key={dia.value}
+          type="button"
+          onClick={() => seleccionarDiaYLimpiar(dia.value)}
+          className={`py-3 flex flex-col items-center justify-center gap-1 transition-colors relative group ${
+            esDiaSeleccionado 
+              ? modoOscuro ? "bg-blue-950/20" : "bg-blue-50/40" 
+              : modoOscuro ? "hover:bg-slate-900/40" : "hover:bg-slate-100/50"
+          }`}
+        >
+          <span className={`text-[10px] font-bold uppercase tracking-wider ${
+            esDiaSeleccionado ? "text-blue-500 font-extrabold" : modoOscuro ? "text-slate-400" : "text-slate-500"
+          }`}>
+            {dia.nombreDia.replace('.', '')}
+          </span>
+          
+          <span className={`text-sm font-black w-7 h-7 flex items-center justify-center rounded-full transition-all ${
+            esDiaSeleccionado 
+              ? "bg-blue-600 text-white shadow-md" 
+              : esHoy 
+              ? "bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400" 
+              : modoOscuro ? "text-slate-200" : "text-slate-700"
+          }`}>
+            {dia.numeroDia}
+          </span>
+          
+          {/* Pequeña barra inferior decorativa si está seleccionado */}
+          {esDiaSeleccionado && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />}
+        </button>
+      );
+    })}
+  </div>
 
-                        return (
-                          <button
-                            key={idHorario}
-                            onClick={() => seleccionar("franja", horaTexto)}
-                            className={`py-3 px-2 rounded-xl border-2 text-sm font-semibold transition-all ${
-                              seleccion.franja === horaTexto
-                                ? "border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500 text-white"
-                                : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10"
-                            }`}
-                          >
-                            {horaTexto}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+  {/* ── 3. CUERPO CENTRAL DE HORARIOS FILTRADOS POR EL DÍA SELECCIONADO ── */}
+  <div className={`p-4 min-h-[140px] ${modoOscuro ? "bg-slate-900/10" : "bg-slate-50/30"}`}>
+    {!seleccion.dia ? (
+      <div className="text-center py-6 text-sm text-slate-400 italic">
+        👈 Por favor, selecciona un día de la cabecera del calendario para ver las horas médicas de ValSync.
+      </div>
+    ) : cargandoHorarios ? (
+      <div className="flex flex-col items-center justify-center py-6 gap-2">
+        <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs text-slate-400 animate-pulse">Consultando disponibilidad con FastAPI...</span>
+      </div>
+    ) : horariosDisponibles.length === 0 ? (
+      <div className="text-center py-6 text-sm text-amber-500 bg-amber-500/5 border border-amber-500/10 rounded-2xl p-4 italic">
+        El médico no tiene turnos cargados para este día de la semana. Prueba con otra fecha.
+      </div>
+    ) : (
+      <div>
+        <span className={`text-[11px] font-bold uppercase tracking-wider block mb-3 ${modoOscuro ? "text-slate-400" : "text-slate-500"}`}>
+          Turnos Disponibles Encontrados:
+        </span>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-6">
+          {horariosDisponibles.map((timeString, index) => {
+            // 🟢 VALIDACIÓN: Asegurar que el string tenga texto
+            if (!timeString) return null;
+
+            // Como la hora es un string directo, evaluamos si es la seleccionada comparando textos
+            const esHoraSeleccionada = seleccion.horaTexto === timeString;
+            
+            // Procesamos el string "09:00" de forma segura
+            const [h, m] = timeString.split(":");
+            const h24 = parseInt(h, 10);
+            const ampm = h24 >= 12 ? "P.M." : "A.M.";
+            const h12 = h24 % 12 || 12;
+            const horaBonita = `${String(h12).padStart(2, "0")}:${m} ${ampm}`;
+
+            return (
+                <button
+                key={`${timeString}-${index}`} // Usamos el string y el índice como key única
+                type="button"
+                onClick={() => setSeleccion((prev) => ({ ...prev, horaId: index, horaTexto: timeString, franja: timeString, hora: timeString }))}
+                className={`py-2.5 px-2 rounded-xl text-xs font-bold text-center transition-all border ${
+                  esHoraSeleccionada
+                    ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-500/20 scale-[1.02]"
+                    : modoOscuro
+                    ? "bg-slate-800 border-slate-700/80 text-slate-200 hover:bg-slate-700"
+                    : "bg-white border-slate-200 text-slate-700 hover:border-blue-500 hover:text-blue-600 shadow-sm"
+                }`}
+              >
+                {horaBonita}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    )}
+  </div>
+</div>
+        )}
+
+        {/* ── BOTÓN DE CONFIRMACIÓN DE PASO ── (Solo visible en PASO.HORARIO) */}
+        {!exito && paso === PASO.HORARIO && (
+          <div className="mt-6 flex justify-end gap-3 border-t pt-4 dark:border-slate-800">
+            <button
+              type="button"
+              // Borra la fecha y hora seleccionada para poder elegir otra limpia
+              onClick={() => setSeleccion({ ...seleccion, dia: null, horaId: null, horaTexto: "" })}
+              className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                modoOscuro
+                  ? "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              Limpiar Selección
+            </button>
+
+            <button
+              type="button"
+              // Habilitado solo si ya hay un día y un bloque de hora seleccionado
+              disabled={!seleccion.dia || !seleccion.horaTexto}
+              onClick={() => {
+                  // 🟢 Guardar la hora seleccionada y avanzar al formulario de Motivo
+                  setSeleccion((prev) => ({
+                    ...prev,
+                    hora: prev.horaTexto,
+                  }));
+
+                  setPaso(PASO.MOTIVO);
+                }}
+              className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 ${
+                seleccion.dia && seleccion.horaTexto
+                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/10 active:scale-[0.98]"
+                  : "bg-slate-200 text-slate-400 dark:bg-slate-800/60 dark:text-slate-600 cursor-not-allowed"
+              }`}
+            >
+              Confirmar Horario y Avanzar →
+            </button>
+          </div>
+        )}
 
           {/* ── PASO 4: MOTIVO Y CONFIRMACIÓN ── */}
           {!exito && paso === PASO.MOTIVO && (
@@ -567,7 +777,7 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
                 />
                 <FilaResumen
                   etiqueta="Hora"
-                  valor={seleccion.franja}
+                  valor={seleccion.hora || seleccion.franja || seleccion.horaTexto}
                   vacio="Sin seleccionar"
                 />
                 <FilaResumen
