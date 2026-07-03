@@ -118,7 +118,6 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
         setCargandoHorarios(true);
         const token = localStorage.getItem("valcare_token");
         
-        // 🚨 OJO: Si tu backend filtra por el ID de perfil, asegúrate de que tu endpoint 
         // de FastAPI resuelva internamente si recibe el staff_id, o pásale el ID correcto.
         const respuesta = await fetch(
           `${API_URL}/valcare/schedules?doctor_id=${seleccion.doctorId}&date=${seleccion.dia}`, 
@@ -128,8 +127,7 @@ export default function BookingEngine({ abierto, onCerrar, sesion, onRequiereAut
         if (!respuesta.ok) throw new Error("No se pudieron obtener los horarios.");
 
         const data = await respuesta.json();
-        // Asumiendo que tu backend devuelve una lista de objetos con el campo .scheduled_time o un array de strings
-        // Ejemplo de formateo si devuelve objetos: data.map(h => h.scheduled_time.slice(0, 5))
+        
         setHorariosDisponibles(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error("Error al traer horarios:", error);
