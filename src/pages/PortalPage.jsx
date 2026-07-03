@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import {
   LogOut, CalendarPlus, CalendarClock, User, Bell,
   CheckCircle, Clock, XCircle, Stethoscope, Menu, X, Palette,
@@ -9,6 +9,7 @@ import { FONDOS_PORTAL } from "../data/datosClinica";
 import { traducirEspecialidad } from "../utils/traducciones";
 
 const API_URL = import.meta.env.VITE_API_URL;
+
 
 const ESTADO_CONFIG = {
   pendiente: {
@@ -37,7 +38,14 @@ function exportarCitaPdf(cita, sesion) {
   const nombrePaciente = `${sesion?.first_name || "Paciente"} ${sesion?.last_name || ""}`.trim();
   const documento = sesion?.document_number || "—";
   const fecha = cita.scheduled_date || "—";
-  const hora = cita.scheduled_time || "—";
+  let hora = "—";
+  if (cita.scheduled_time) {
+  const [h, m] = cita.scheduled_time.split(":");
+  const horas24 = parseInt(h, 10);
+  const ampm = horas24 >= 12 ? "P.M." : "A.M.";
+  const horas12 = horas24 % 12 || 12;
+  hora = `${String(horas12).padStart(2, "0")}:${m} ${ampm}`;
+}
   const motivo = cita.reason || "Sin observaciones";
   const codigo = `VAL-${cita.id || "000"}`;
 
@@ -99,8 +107,6 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
   const [seccionActiva, setSeccionActiva] = useState("citas");
   const [vistaAgenda, setVistaAgenda] = useState("lista");
   const [notificacionesAbierta, setNotificacionesAbierta] = useState(false);
-  
-  // 🟢 Estados reales vinculados al backend de ValSync
   const [misCitas, setMisCitas] = useState([]);
   const [cargandoCitas, setCargandoCitas] = useState(true);
 
@@ -112,29 +118,29 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
     if (f) setFondoActual(f);
   }, []);
 
-  // 🟢 Fetch asíncrono para obtener citas reales del paciente
-  useEffect(() => {
-    const obtenerCitas = async () => {
-      if (!sesion?.id) return;
-      try {
-        setCargandoCitas(true);
-        const token = localStorage.getItem("valcare_token");
-        const respuesta = await fetch(`${API_URL}/valcare/my-appointments`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (respuesta.ok) {
-          const data = await respuesta.json();
-          setMisCitas(Array.isArray(data) ? data : []);
-        }
-      } catch (error) {
-        console.error("Error cargando las citas del servidor:", error);
-      } finally {
-        setCargandoCitas(false);
+  const obtenerCitas = useCallback(async () => {
+    if (!sesion?.id) return;
+    try {
+      setCargandoCitas(true);
+      const token = localStorage.getItem("valcare_token");
+      const respuesta = await fetch(`${API_URL}/valcare/my-appointments`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (respuesta.ok) {
+        const data = await respuesta.json();
+        setMisCitas(Array.isArray(data) ? data : []);
       }
-    };
-
-    obtenerCitas();
+    } catch (error) {
+      console.error("Error cargando las citas del servidor:", error);
+    } finally {
+      setCargandoCitas(false);
+    }
   }, [sesion?.id]);
+
+  // Fetch asíncrono inicial
+  useEffect(() => {
+    obtenerCitas();
+  }, [obtenerCitas]);
 
   const citasPendientes = misCitas.filter((c) => c.status === "pendiente").length;
   const citasConfirmadas = misCitas.filter((c) => c.status === "confirmada").length;
@@ -172,6 +178,13 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
     localStorage.removeItem("valcare_token");
     onCerrarSesion();
   };
+
+  const childrenConFetch = React.Children.map(children, child => {
+    if (React.isValidElement(child)) {
+      return React.cloneElement(child, { onCitaCreada: obtenerCitas });
+    }
+    return child;
+  });
 
   return (
     <div className={`min-h-screen w-full flex flex-col ${
@@ -512,7 +525,8 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
         </div>
       </main>
 
-      {children}
+      {/* 🛠️ Aquí inyectamos de manera dinámica la prop para refrescar */}
+      {childrenConFetch}
     </div>
   );
 }
@@ -520,6 +534,23 @@ export default function PortalPage({ sesion, onCerrarSesion, onNuevaCita, childr
 /* ── Subcomponentes Auxiliares ── */
 function TarjetaCita({ cita, sesion, modoOscuro }) {
   const config = ESTADO_CONFIG[cita.status] || ESTADO_CONFIG.pendiente;
+
+  // Formateamos la hora a formato de 12 horas con A.M. / P.M.
+  const horaFormateada = useMemo(() => {
+    if (!cita.scheduled_time) return "—";
+    
+    try {
+      // Maneja formatos "14:30" o "14:30:00"
+      const [h, m] = cita.scheduled_time.split(":");
+      const horas24 = parseInt(h, 10);
+      const ampm = horas24 >= 12 ? "P.M." : "A.M.";
+      const horas12 = horas24 % 12 || 12;
+      
+      return `${String(horas12).padStart(2, "0")}:${m} ${ampm}`;
+    } catch (error) {
+      return cita.scheduled_time; // Retorno de respaldo por si ocurre un imprevisto
+    }
+  }, [cita.scheduled_time]);
 
   return (
     <article className={`rounded-3xl border p-6 shadow-sm transition-all ${
@@ -561,7 +592,8 @@ function TarjetaCita({ cita, sesion, modoOscuro }) {
         </div>
         <div>
           <p className={`text-[11px] font-bold uppercase tracking-[0.2em] ${modoOscuro ? "text-slate-500" : "text-slate-500"}`}>Hora</p>
-          <p className={`text-sm font-semibold ${modoOscuro ? "text-white" : "text-slate-900"}`}>{cita.scheduled_time}</p>
+          {/* Mostramos la hora formateada de manera limpia */}
+          <p className={`text-sm font-semibold ${modoOscuro ? "text-white" : "text-slate-900"}`}>{horaFormateada}</p>
         </div>
         <div>
           <p className={`text-[11px] font-bold uppercase tracking-[0.2em] ${modoOscuro ? "text-slate-500" : "text-slate-500"}`}>Registro</p>
